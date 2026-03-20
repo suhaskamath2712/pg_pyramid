@@ -1,0 +1,13 @@
+# Build artifacts
+*.o
+*.so
+*.bc
+*.a
+*.dll
+*.dylib
+
+# Temp / generated
+*.tmp
+*.log
+results/
+regression.diffs

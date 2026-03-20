@@ -1,0 +1,67 @@
+CREATE EXTENSION pyramid;
+SELECT round(pyramid_value(ARRAY[0.10, 0.50, 0.50]::float8[])::numeric, 6) AS pv1;
+   pv1
+--------
+ 0.400000
+(1 row)
+
+SELECT round(pyramid_value(ARRAY[0.90, 0.50, 0.50]::float8[])::numeric, 6) AS pv2;
+   pv2
+--------
+ 3.400000
+(1 row)
+
+SELECT round(pyramid_value(ARRAY[0.50, 0.80, 0.20]::float8[])::numeric, 6) AS pv3;
+   pv3
+--------
+ 1.300000
+(1 row)
+
+SELECT pyramid,
+	round(range_lo::numeric, 6) AS range_lo,
+	round(range_hi::numeric, 6) AS range_hi
+FROM pyramid_ranges(
+	ARRAY[0.10, 0.10, 0.10]::float8[],
+	ARRAY[0.40, 0.40, 0.40]::float8[]
+)
+ORDER BY pyramid;
+ pyramid | range_lo | range_hi
+---------+----------+----------
+	0 | 0.100000 | 0.400000
+	1 | 1.100000 | 1.400000
+	2 | 2.100000 | 2.400000
+(3 rows)
+
+CREATE TABLE pyramid_points (
+	id int,
+	v float8[]
+);
+INSERT INTO pyramid_points VALUES
+	(1, ARRAY[0.15, 0.15, 0.15]::float8[]),
+	(2, ARRAY[0.20, 0.25, 0.30]::float8[]),
+	(3, ARRAY[0.35, 0.35, 0.35]::float8[]),
+	(4, ARRAY[0.41, 0.30, 0.20]::float8[]),
+	(5, ARRAY[0.80, 0.80, 0.80]::float8[]);
+CREATE INDEX pyramid_points_idx ON pyramid_points USING btree (pyramid_value(v));
+WITH q AS (
+	SELECT ARRAY[0.10, 0.10, 0.10]::float8[] AS lo,
+	       ARRAY[0.40, 0.40, 0.40]::float8[] AS hi
+), r AS (
+	SELECT pr.range_lo, pr.range_hi
+	FROM q, LATERAL pyramid_ranges(q.lo, q.hi) pr
+)
+SELECT p.id
+FROM pyramid_points p, q, r
+WHERE pyramid_value(p.v) BETWEEN r.range_lo AND r.range_hi
+  AND pyramid_contains(p.v, q.lo, q.hi)
+GROUP BY p.id
+ORDER BY p.id;
+ id
+----
+  1
+  2
+  3
+(3 rows)
+
+DROP TABLE pyramid_points;
+DROP EXTENSION pyramid;

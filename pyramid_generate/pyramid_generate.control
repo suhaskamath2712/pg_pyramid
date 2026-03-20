@@ -1,0 +1,9 @@
+# pyramid_generate extension
+# Control file for the generator extension. Used by CREATE EXTENSION to
+# register the module – points to the built shared library and provides a
+# short descriptive comment.
+comment = 'Generate uniformly distributed random float8 vectors by dimension and size'
+default_version = '1.0'
+module_pathname = '$libdir/pyramid_generate'
+relocatable = true
+trusted = true

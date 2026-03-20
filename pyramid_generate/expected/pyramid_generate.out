@@ -1,0 +1,37 @@
+CREATE EXTENSION pyramid_generate;
+SELECT count(*) AS generated_rows
+FROM pyramid_generate(3, 10);
+ generated_rows
+----------------
+             10
+(1 row)
+
+SELECT bool_and(array_length(v, 1) = 5) AS all_len_5
+FROM pyramid_generate(5, 50) AS g(v);
+ all_len_5
+-----------
+ t
+(1 row)
+
+SELECT min(x) >= 0 AND max(x) < 1 AS values_in_unit_interval
+FROM (
+	SELECT unnest(v) AS x
+	FROM pyramid_generate(4, 200) AS g(v)
+) s;
+ values_in_unit_interval
+-------------------------
+ t
+(1 row)
+
+SELECT count(*) AS generated_zero_rows
+FROM pyramid_generate(4, 0);
+ generated_zero_rows
+---------------------
+                   0
+(1 row)
+
+SELECT pyramid_generate(0, 5);
+ERROR:  dimension must be greater than zero
+SELECT pyramid_generate(3, -1);
+ERROR:  size cannot be negative
+DROP EXTENSION pyramid_generate;
