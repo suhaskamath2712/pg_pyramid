@@ -1,5 +1,20 @@
 # Pyramid PostgreSQL Extensions
 
+## Introduction
+
+This project is an implementation-inspired extension set based on the Pyramid-Technique introduced in the SIGMOD'98 paper by Berchtold, Böhm, and Kriegel. The core idea is to map high-dimensional points into a single scalar key so that standard 1D index structures (here, PostgreSQL `btree`) can still be used for efficient candidate retrieval. For range queries, the high-dimensional query box is decomposed into a small set of 1D intervals, and exact filtering is then applied to remove false positives.
+
+In short, this repository translates the paper’s concept into practical PostgreSQL extension functions for:
+
+- dimensionality-reducing key mapping (`pyramid_value`)
+- range decomposition (`pyramid_ranges`)
+- exact refinement (`pyramid_contains`)
+- synthetic dataset generation (`pyramid_generate`)
+
+### ACM reference
+
+Stefan Berchtold, Christian Böhm, and Hans-Peter Kriegal. 1998. The pyramid-technique: towards breaking the curse of dimensionality. In Proceedings of the 1998 ACM SIGMOD international conference on Management of data (SIGMOD '98). Association for Computing Machinery, New York, NY, USA, 142–153. https://doi.org/10.1145/276304.276318
+
 This repository contains a trimmed, extension-only layout for two PostgreSQL extensions:
 
 - `pyramid`: high-dimensional Pyramid mapping and range decomposition for btree indexing
