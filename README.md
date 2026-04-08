@@ -94,6 +94,41 @@ WHERE pyramid_value(p.v) BETWEEN r.range_lo AND r.range_hi
 ORDER BY p.id;
 ```
 
+## Python experiment script
+
+A convenience script `run_pyramid_experiment.py` is included at the repository root to run a small end-to-end experiment. The script:
+
+- Connects to PostgreSQL using the hardcoded `DB_CONFIG` in the script.
+- Ensures the `pyramid` and `pyramid_generate` extensions exist in the target database.
+- Creates a table (default name `pyramid`), populates it using `pyramid_generate`, builds a B-tree expression index on `pyramid_value(v)`, and runs the standard Pyramid candidate+refinement query both without and with the index.
+- Measures wall-clock execution time for each run and verifies that both result sets are identical.
+
+Prerequisites:
+
+- Python 3.8+ and `psycopg2` (development use: `pip install psycopg2-binary`).
+
+Quick start / usage:
+
+1. Edit `run_pyramid_experiment.py` to adjust `DB_CONFIG` (host, dbname, user, password) and `ROW_COUNT` if you want fewer rows for a fast test.
+2. (Optional) Change the query bounds by modifying `query_lo` and `query_hi` in the script's `main()`; by default the script uses `lo = [0.25]*dims` and `hi = [0.75]*dims`.
+3. Run the script and pass the desired dimensionality with `-d/--dims`:
+
+```bash
+python3 run_pyramid_experiment.py --dims 8
+```
+
+The script prints:
+
+- total matches and wall-clock time for the query executed *without* the index
+- whether the planner used the Pyramid index (via `EXPLAIN (FORMAT JSON)`)
+- total matches and wall-clock time for the query executed *with* the index
+- a verification that both result sets are equal (the script exits non-zero on mismatch)
+
+Notes:
+
+- The script issues `CREATE EXTENSION IF NOT EXISTS pyramid` and `CREATE EXTENSION IF NOT EXISTS pyramid_generate` in the target database; the DB user must have sufficient privileges.
+- `ROW_COUNT` defaults to a large value (1,000,000) — reduce it for quicker iterations during development.
+
 ## Optional tests
 
 From each extension directory:
