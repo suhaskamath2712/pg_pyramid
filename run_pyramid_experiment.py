@@ -26,7 +26,6 @@ DB_CONFIG = {
 
 TABLE_NAME = "points"
 INDEX_NAME = f"{TABLE_NAME}_pyramid_idx"
-DIMENSIONS = 8
 
 #1M objects
 ROW_COUNT = 1000000
@@ -46,7 +45,6 @@ WHERE pyramid_value(p.v) BETWEEN r.range_lo AND r.range_hi
 GROUP BY p.id
 ORDER BY p.id
 """
-
 
 def ensure_extensions(cur: psycopg2.extensions.cursor) -> None:
     """Ensure required extensions are installed in the current database."""
@@ -90,7 +88,6 @@ def create_and_analyze_index(cur: psycopg2.extensions.cursor) -> None:
     )
     cur.execute(f"ANALYZE {TABLE_NAME};")
     
-
 def run_query(cur: psycopg2.extensions.cursor, lo: Sequence[float], hi: Sequence[float]) -> Tuple[List[int], float]:
     """Run the Pyramid candidate+refinement query and return matching IDs and elapsed time (seconds).
 
@@ -140,7 +137,7 @@ parser = argparse.ArgumentParser(
         prog="run_pyramid_experiment.py",
         description="Run Pyramid experiment (specify dimensions via CLI).",
     )
-parser.add_argument("-d", "--dims", type=int, default=DIMENSIONS, help="vector dimensionality")
+parser.add_argument("-d", "--dims", type=int, default=8, help="vector dimensionality")
 args = parser.parse_args()
 dims = args.dims
 
@@ -155,8 +152,8 @@ with psycopg2.connect(**DB_CONFIG) as conn:
         print(f"Inserting {ROW_COUNT:,} vectors of dimension {dims} using pyramid_generate...")
         insert_vectors(cur, ROW_COUNT, dims)
 
-        query_lo = [0.25] * dims
-        query_hi = [0.75] * dims
+        query_lo = [0.1] * dims
+        query_hi = [0.5] * dims
 
         matched_ids_no_idx, time_no_idx = run_query(cur, query_lo, query_hi)
         print(f"Total matches without index: {len(matched_ids_no_idx)}")
@@ -167,12 +164,12 @@ with psycopg2.connect(**DB_CONFIG) as conn:
 
         if (not is_idx_used(cur, query_lo, query_hi)):
             print("WARNING: Pyramid index is not being used for the query plan! Fix the selectivity!")
-
-        matched_ids_with_idx, time_with_idx = run_query(cur, query_lo, query_hi)
-        print(f"Total matches with index: {len(matched_ids_with_idx)}")
-        print(f"Query time with index: {time_with_idx:.6f} s")
-
-        if matched_ids_with_idx == matched_ids_no_idx:
-            print("Result sets are equal.")
         else:
-            print("Result sets are not equal.")
+            matched_ids_with_idx, time_with_idx = run_query(cur, query_lo, query_hi)
+            print(f"Total matches with index: {len(matched_ids_with_idx)}")
+            print(f"Query time with index: {time_with_idx:.6f} s")
+
+            if matched_ids_with_idx == matched_ids_no_idx:
+                print("Result sets are equal.")
+            else:
+                print("Result sets are not equal.")

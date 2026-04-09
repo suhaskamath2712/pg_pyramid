@@ -16,7 +16,10 @@ OBJS = \
 	pyramid.o
 
 EXTENSION = pyramid
-DATA = pyramid--1.0.sql
+DATA = \
+	pyramid--1.0.sql \
+	pyramid--1.1.sql \
+	pyramid--1.0--1.1.sql
 PGFILEDESC = "pyramid - high-dimensional pyramid mapping for btree indexing"
 
 REGRESS = pyramid

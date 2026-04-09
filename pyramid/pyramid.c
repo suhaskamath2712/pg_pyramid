@@ -50,10 +50,15 @@
 
 #include <math.h>
 
+#include "catalog/pg_type_d.h"
 #include "fmgr.h"
 #include "funcapi.h"
+#include "nodes/supportnodes.h"
+#include "optimizer/optimizer.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
+#include "utils/selfuncs.h"
 
 /*
  * PG_MODULE_MAGIC_EXT was added in newer PostgreSQL versions.
@@ -71,6 +76,7 @@ PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1(pyramid_value);
 PG_FUNCTION_INFO_V1(pyramid_contains);
 PG_FUNCTION_INFO_V1(pyramid_ranges);
+PG_FUNCTION_INFO_V1(pyramid_support);
 
 typedef struct PyramidRangeItem
 {
@@ -90,6 +96,10 @@ static void extract_float8_array(ArrayType *arr, float8 **vals, int *ndims);
 static void validate_same_dims(int ndims_a, int ndims_b, const char *what_a, const char *what_b);
 static inline float8 minabs_interval(float8 lo, float8 hi);
 static void append_range(PyramidRangesCtx *ctx, int pyramid, float8 lo, float8 hi);
+static bool extract_const_float8_array(Node *node, PlannerInfo *root, float8 **vals, int *ndims);
+static bool estimate_query_box_selectivity(Node *lo_node, Node *hi_node,
+										   PlannerInfo *root, Selectivity *sel_out);
+static double estimate_ranges_rows(Node *arg_node, PlannerInfo *root);
 
 /*
  * extract_float8_array
@@ -180,6 +190,248 @@ append_range(PyramidRangesCtx *ctx, int pyramid, float8 lo, float8 hi)
 	ctx->ranges[ctx->nranges].range_lo = lo;
 	ctx->ranges[ctx->nranges].range_hi = hi;
 	ctx->nranges++;
+}
+
+/*
+ * Planner support helpers
+ *
+ * These helpers provide planner-visible cardinality/selectivity/cost
+ * estimates for the SQL-callable functions in this extension.
+ */
+
+static bool
+extract_const_float8_array(Node *node, PlannerInfo *root, float8 **vals, int *ndims)
+{
+	Node	   *est_node = node;
+	Const	  *c;
+	ArrayType  *arr;
+	Datum	   *elems;
+	bool	   *nulls;
+	int			nelems;
+
+	*vals = NULL;
+	*ndims = 0;
+
+	if (root != NULL)
+		est_node = estimate_expression_value(root, node);
+
+	if (est_node == NULL || !IsA(est_node, Const))
+		return false;
+
+	c = (Const *) est_node;
+	if (c->constisnull || c->consttype != FLOAT8ARRAYOID)
+		return false;
+
+	arr = DatumGetArrayTypeP(c->constvalue);
+	if (ARR_NDIM(arr) != 1 || ARR_ELEMTYPE(arr) != FLOAT8OID)
+		return false;
+
+	*ndims = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+	if (*ndims <= 0)
+		return false;
+
+	deconstruct_array(arr,
+					  FLOAT8OID,
+					  sizeof(float8),
+					  FLOAT8PASSBYVAL,
+					  TYPALIGN_DOUBLE,
+					  &elems,
+					  &nulls,
+					  &nelems);
+
+	*vals = palloc(sizeof(float8) * nelems);
+	for (int i = 0; i < nelems; i++)
+	{
+		if (nulls[i])
+		{
+			pfree(*vals);
+			*vals = NULL;
+			*ndims = 0;
+			pfree(elems);
+			pfree(nulls);
+			return false;
+		}
+
+		(*vals)[i] = DatumGetFloat8(elems[i]);
+	}
+
+	pfree(elems);
+	pfree(nulls);
+	return true;
+}
+
+static bool
+estimate_query_box_selectivity(Node *lo_node, Node *hi_node,
+									PlannerInfo *root, Selectivity *sel_out)
+{
+	float8	 *lo;
+	float8	 *hi;
+	int			d_lo;
+	int			d_hi;
+	Selectivity sel = 1.0;
+
+	if (!extract_const_float8_array(lo_node, root, &lo, &d_lo))
+		return false;
+
+	if (!extract_const_float8_array(hi_node, root, &hi, &d_hi))
+	{
+		pfree(lo);
+		return false;
+	}
+
+	if (d_lo != d_hi)
+	{
+		pfree(lo);
+		pfree(hi);
+		return false;
+	}
+
+	for (int i = 0; i < d_lo; i++)
+	{
+		float8		width;
+
+		if (lo[i] > hi[i])
+		{
+			sel = 0.0;
+			break;
+		}
+
+		width = hi[i] - lo[i];
+		width = Max(0.0, Min(1.0, width));
+		sel *= width;
+	}
+
+	pfree(lo);
+	pfree(hi);
+
+	CLAMP_PROBABILITY(sel);
+	*sel_out = sel;
+	return true;
+}
+
+static double
+estimate_ranges_rows(Node *arg_node, PlannerInfo *root)
+{
+	float8	 *vals;
+	int			dims;
+	double		rows;
+
+	if (!extract_const_float8_array(arg_node, root, &vals, &dims))
+		return -1.0;
+
+	rows = clamp_row_est((double) (2 * dims));
+	pfree(vals);
+	return rows;
+}
+
+Datum
+pyramid_support(PG_FUNCTION_ARGS)
+{
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+
+	if (rawreq == NULL)
+		PG_RETURN_POINTER(NULL);
+
+	if (IsA(rawreq, SupportRequestRows))
+	{
+		SupportRequestRows *req = (SupportRequestRows *) rawreq;
+
+		if (req->node != NULL && IsA(req->node, FuncExpr))
+		{
+			FuncExpr   *fexpr = (FuncExpr *) req->node;
+
+			if (list_length(fexpr->args) == 2)
+			{
+				double rows = estimate_ranges_rows((Node *) linitial(fexpr->args), req->root);
+
+				if (rows > 0.0)
+				{
+					req->rows = rows;
+					PG_RETURN_POINTER(req);
+				}
+			}
+		}
+
+		PG_RETURN_POINTER(NULL);
+	}
+
+	if (IsA(rawreq, SupportRequestSelectivity))
+	{
+		SupportRequestSelectivity *req = (SupportRequestSelectivity *) rawreq;
+
+		/* Restriction case only: function selectivity for WHERE clause */
+		if (!req->is_join && list_length(req->args) == 3)
+		{
+			Selectivity sel;
+
+			if (estimate_query_box_selectivity((Node *) lsecond(req->args),
+										  (Node *) lthird(req->args),
+										  req->root,
+										  &sel))
+			{
+				req->selectivity = sel;
+				PG_RETURN_POINTER(req);
+			}
+		}
+
+		PG_RETURN_POINTER(NULL);
+	}
+
+	if (IsA(rawreq, SupportRequestCost))
+	{
+		SupportRequestCost *req = (SupportRequestCost *) rawreq;
+		int			nargs = get_func_nargs(req->funcid);
+		Oid			rettype = get_func_rettype(req->funcid);
+		double		dims = 8.0; /* fallback when argument cardinality is unknown */
+
+		req->startup = 0.0;
+
+		if (req->node != NULL && IsA(req->node, FuncExpr))
+		{
+			FuncExpr   *fexpr = (FuncExpr *) req->node;
+
+			if (list_length(fexpr->args) > 0)
+			{
+				float8	 *dummy_vals;
+				int			parsed_dims;
+
+				if (extract_const_float8_array((Node *) linitial(fexpr->args),
+											  req->root,
+											  &dummy_vals,
+											  &parsed_dims))
+				{
+					dims = (double) parsed_dims;
+					pfree(dummy_vals);
+				}
+			}
+		}
+
+		/* pyramid_value(v): one pass to find argmax distance from center */
+		if (rettype == FLOAT8OID && nargs == 1)
+		{
+			req->per_tuple = (2.0 + 6.0 * dims) * cpu_operator_cost;
+			PG_RETURN_POINTER(req);
+		}
+
+		/* pyramid_contains(v, lo, hi): bound checks per dimension */
+		if (rettype == BOOLOID && nargs == 3)
+		{
+			req->per_tuple = (2.0 + 4.0 * dims) * cpu_operator_cost;
+			PG_RETURN_POINTER(req);
+		}
+
+		/* pyramid_ranges(lo, hi): SRF setup plus small per-output-row work */
+		if (nargs == 2)
+		{
+			req->startup = (10.0 + 12.0 * dims) * cpu_operator_cost;
+			req->per_tuple = 2.0 * cpu_operator_cost;
+			PG_RETURN_POINTER(req);
+		}
+
+		PG_RETURN_POINTER(NULL);
+	}
+
+	PG_RETURN_POINTER(NULL);
 }
 
 Datum

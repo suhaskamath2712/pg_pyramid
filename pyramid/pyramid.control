@@ -3,7 +3,7 @@
 # intentionally minimal: it provides a human-readable comment and points the
 # server to the shared library produced by the build.
 comment = 'Pyramid-technique mapping and range decomposition for btree indexes'
-default_version = '1.0'
+default_version = '1.1'
 module_pathname = '$libdir/pyramid'
 relocatable = true
 trusted = true

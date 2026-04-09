@@ -54,6 +54,116 @@ Useful checks:
 - `pg_config --sharedir`
 - `pg_config --pkglibdir`
 
+## Upgrade existing `pyramid` installs (e.g. 1.0 -> 1.1)
+
+If you already have `pyramid` installed in one or more databases, upgrading has **two parts**:
+
+1. install new extension files on the server host (shared library + SQL scripts)
+2. run `ALTER EXTENSION` inside each target database
+
+The new `1.1` release adds planner support hooks (`SUPPORT pyramid_support`) to improve planner row/selectivity/cost estimation.
+
+### Step 1: install updated extension files on the PostgreSQL server host
+
+From this repository:
+
+```bash
+cd pyramid
+make USE_PGXS=1
+sudo make USE_PGXS=1 install
+```
+
+This copies:
+
+- `pyramid.so` to PostgreSQL's library directory (`$pkglibdir`)
+- `pyramid--1.1.sql` and `pyramid--1.0--1.1.sql` to PostgreSQL's extension directory (`$sharedir/extension`)
+
+Notes:
+
+- If you build against PostgreSQL 16, install into the PostgreSQL 16 instance you are actually running.
+- Running `make install` is cluster-level; it does **not** upgrade individual databases yet.
+
+### Step 2: upgrade the extension in each database
+
+Connect to each database where `pyramid` is installed and run:
+
+```sql
+SELECT extname, extversion
+FROM pg_extension
+WHERE extname = 'pyramid';
+
+ALTER EXTENSION pyramid UPDATE TO '1.1';
+```
+
+You can use `ALTER EXTENSION pyramid UPDATE;` as well, but `UPDATE TO '1.1'` is explicit and safer for controlled rollouts.
+
+Important:
+
+- Extension upgrades are **per database** (not global). Repeat for every DB that has `pyramid`.
+- You need sufficient privileges (typically superuser or extension owner, depending on setup).
+
+### Step 3: verify upgrade success
+
+Check installed and available versions:
+
+```sql
+SELECT extname, extversion
+FROM pg_extension
+WHERE extname = 'pyramid';
+
+SELECT name, version, installed
+FROM pg_available_extension_versions
+WHERE name = 'pyramid'
+ORDER BY version;
+```
+
+Confirm support hooks are attached:
+
+```sql
+SELECT proname,
+			 prosupport::regproc AS support_function
+FROM pg_proc
+WHERE proname IN ('pyramid_value', 'pyramid_contains', 'pyramid_ranges')
+ORDER BY proname;
+```
+
+Expected `support_function`: `pyramid_support`.
+
+### Step 4: refresh stats and re-check plans
+
+After upgrade, refresh table stats and inspect plans again:
+
+```sql
+ANALYZE points;
+EXPLAIN (ANALYZE, BUFFERS)
+WITH q AS (
+		SELECT ARRAY[0.10,0.10,0.10,0.10,0.10,0.10,0.10,0.10]::float8[] AS lo,
+					 ARRAY[0.50,0.50,0.50,0.50,0.50,0.50,0.50,0.50]::float8[] AS hi
+), r AS (
+		SELECT pr.range_lo, pr.range_hi
+		FROM q, LATERAL pyramid_ranges(q.lo, q.hi) pr
+)
+SELECT p.id
+FROM points p, q, r
+WHERE pyramid_value(p.v) BETWEEN r.range_lo AND r.range_hi
+	AND pyramid_contains(p.v, q.lo, q.hi)
+GROUP BY p.id
+ORDER BY p.id;
+```
+
+### Troubleshooting
+
+- **"No update path from version '1.0' to version '1.1'"**
+	- New SQL upgrade files are not installed on the server used by your running cluster.
+	- Re-run `sudo make USE_PGXS=1 install` from `pyramid/` on that host.
+
+- **`ALTER EXTENSION` succeeds but sessions still behave like old code**
+	- Existing backend processes may keep old shared library code loaded.
+	- Reconnect application sessions (or recycle pool workers) to ensure new backends load updated `pyramid.so`.
+
+- **Permission errors**
+	- Run upgrade as a role that owns the extension (or superuser where required).
+
 ## Enable in SQL
 
 - `CREATE EXTENSION pyramid;`
