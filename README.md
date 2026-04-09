@@ -208,9 +208,9 @@ ORDER BY p.id;
 
 A convenience script `run_pyramid_experiment.py` is included at the repository root to run a small end-to-end experiment. The script:
 
-- Connects to PostgreSQL using the hardcoded `DB_CONFIG` in the script.
+- Connects to PostgreSQL using environment variables (`PYRAMID_DB_*`).
 - Ensures the `pyramid` and `pyramid_generate` extensions exist in the target database.
-- Creates a table (default name `pyramid`), populates it using `pyramid_generate`, builds a B-tree expression index on `pyramid_value(v)`, and runs the standard Pyramid candidate+refinement query both without and with the index.
+- Creates a table (default name `points`), populates it using `pyramid_generate`, builds a B-tree expression index on `pyramid_value(v)`, and runs the standard Pyramid candidate+refinement query both without and with the index.
 - Measures wall-clock execution time for each run and verifies that both result sets are identical.
 
 Prerequisites:
@@ -219,9 +219,15 @@ Prerequisites:
 
 Quick start / usage:
 
-1. Edit `run_pyramid_experiment.py` to adjust `DB_CONFIG` (host, dbname, user, password) and `ROW_COUNT` if you want fewer rows for a fast test.
-2. (Optional) Change the query bounds by modifying `query_lo` and `query_hi` in the script's `main()`; by default the script uses `lo = [0.25]*dims` and `hi = [0.75]*dims`.
-3. Run the script and pass the desired dimensionality with `-d/--dims`:
+1. Configure database settings using environment variables:
+	- `PYRAMID_DB_HOST`
+	- `PYRAMID_DB_PORT`
+	- `PYRAMID_DB_NAME`
+	- `PYRAMID_DB_USER`
+	- `PYRAMID_DB_PASSWORD`
+2. (Optional) Set `PYRAMID_ROW_COUNT` to reduce data volume for faster local testing.
+3. (Optional) Change the query bounds by modifying `query_lo` and `query_hi` in the script (defaults are `lo = [0.10]*dims`, `hi = [0.50]*dims`).
+4. Run the script and pass the desired dimensionality with `-d/--dims`:
 
 ```bash
 python3 run_pyramid_experiment.py --dims 8
@@ -237,7 +243,7 @@ The script prints:
 Notes:
 
 - The script issues `CREATE EXTENSION IF NOT EXISTS pyramid` and `CREATE EXTENSION IF NOT EXISTS pyramid_generate` in the target database; the DB user must have sufficient privileges.
-- `ROW_COUNT` defaults to a large value (1,000,000) — reduce it for quicker iterations during development.
+- `PYRAMID_ROW_COUNT` defaults to a large value (1,000,000) — reduce it for quicker iterations during development.
 
 ## Optional tests
 

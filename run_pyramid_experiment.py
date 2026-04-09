@@ -11,24 +11,25 @@ Flow:
 
 from __future__ import annotations
 import argparse
+import os
 from typing import Any, List, Sequence, Tuple
 import time
 
 import psycopg2
 
 DB_CONFIG = {
-    "host": "127.0.0.1",
-    "port": 5432,
-    "dbname": "pg_pyramid",
-    "user": "postgres",
-    "password": "27122005",
+    "host": os.getenv("PYRAMID_DB_HOST", "127.0.0.1"),
+    "port": int(os.getenv("PYRAMID_DB_PORT", "5432")),
+    "dbname": os.getenv("PYRAMID_DB_NAME", "pg_pyramid"),
+    "user": os.getenv("PYRAMID_DB_USER", "postgres"),
+    "password": os.getenv("PYRAMID_DB_PASSWORD", ""),
 }
 
 TABLE_NAME = "points"
 INDEX_NAME = f"{TABLE_NAME}_pyramid_idx"
 
-#1M objects
-ROW_COUNT = 1000000
+# 1M objects (override with PYRAMID_ROW_COUNT)
+ROW_COUNT = int(os.getenv("PYRAMID_ROW_COUNT", "1000000"))
 
 PYRAMID_QUERY_SQL = f"""
 WITH q AS (

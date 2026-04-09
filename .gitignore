@@ -11,3 +11,8 @@
 *.log
 results/
 regression.diffs
+
+# Local environment secrets
+.env
+.env.*
+!.env.example
